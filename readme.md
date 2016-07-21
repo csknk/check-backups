@@ -1,5 +1,5 @@
-Move Directory into a Local Virtual Machine for Testing Purposes.
-==================================================================
+Check Site Backup Integrity: WordPress/PHP MySQL
+================================================
 
 If you've set up a backup solution for PHP/WordPress, you will probably be backing up site files as well as the site database. For a proper backup solution, you need to check that the backup copy is viable. This is not something that you should discover during an emergency recovery situation. Doing this manually takes too much time.
 

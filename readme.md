@@ -57,7 +57,7 @@ associated databases on the guest machine.
 - Run `import-databases` in a terminal
 
 ## TODO
-- Document how to add key-pair to avoid entering password during slash
+- Document how to add key-pair to avoid entering password during SSH
 - Auto create the staging directory for the sql files transfer
 - Change ownership of moved HTML files
 - Trigger the import-databases script from the host, so working copies are built with a single command

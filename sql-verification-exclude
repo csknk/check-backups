@@ -1,0 +1,4 @@
+performance_schema.sql
+phpmyadmin.sql
+mysql.sql
+*.log

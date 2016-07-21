@@ -1,0 +1,36 @@
+#!/bin/bash
+#
+# The purpose of this script is to import databases so that working copies of
+# backed up PHP/WordPress websites can be quickly and easily checked.
+#
+# The script loops through all databases in a staging directory and imports them
+# into MySQL/MariaDB. Existing databases having the same name will be overwritten.
+#
+#-------------------------------------------------------------------------------
+
+SOURCE=/home/david/staging/sql
+PASSWORD=thepassword
+DATABASES=($SOURCE/*)
+
+for (( i = 0; i < ${#DATABASES[@]}; i++ )); do
+
+  # The file extension - in our case, there are *.log files that should be ignored
+  EXT=${DATABASES[$i]#*.}
+
+  if [[ "sql" == $EXT ]]; then
+
+    DB_SOURCE=${DATABASES[$i]}
+    DB_NAME=$(basename ${DATABASES[$i]} .sql)
+
+    # If a Databse exists with this name, DROP it
+    mysql --user=root --password=$PASSWORD -e "DROP DATABASE IF EXISTS \`$DB_NAME\`"
+
+    # Create new DB with the name of the DB backup file
+    mysql --user=root --password=$PASSWORD -e "create database \`$DB_NAME\`; GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO root@localhost IDENTIFIED BY '$PASSWORD'"
+
+    # Import the Database
+    mysql --user=root --password=$PASSWORD $DB_NAME < $DB_SOURCE
+
+  fi
+
+done

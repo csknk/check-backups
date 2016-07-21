@@ -1,0 +1,140 @@
+#!/bin/bash
+#
+# Move a directory into a local Virtual Machine for testing purposes.
+# ==================================================================
+#
+# The directory in question is a datestamped directory that contains the entire
+# `html` directory (i.e. document root) from a backed-up Apache server. Moving
+# these files into a VM with an appropriately configured `/etc/hosts` file
+# allows the integrity of the backed-up sites to be easily checked.
+#
+# This script also moves backed up MySQL files (originally created by `mysqldump`)
+# to a staging directory on the VM - from here, they can be easily imported.
+#
+# The script was developed for use on Ubuntu 16.04 Xenial Xerus desktop and uses
+# [Zenity](https://help.gnome.org/users/zenity/stable/intro.html.en) to create
+# user dialogues.
+#
+# Usage:
+# ------
+#
+# - Add `move-backups` to `usr/local/bin`: `mv move-backups /usr/local/bin`
+# - Make executable: `chmod +x /usr/local/bin/move-backups`
+# - Run `move-backups` in a terminal and follow instructions
+#
+# When prompted, you should select a directory that contains the backed-up `html`
+# directory from the Apache doc root - the directory that is normally located
+# at `/var/www/` in a standard Apache setup.
+#
+# Note that the moved files won't do anything unless you also import the
+# associated databases to the guest machine. There's a companion script for this.
+#
+# Requirements
+# ------------
+# [VirtualBox](https://www.virtualbox.org/) is required for the Virtual Machine.
+# In my case, the VM runs Ubuntu 16.04 Xenial Xerus desktop - desktop rather
+# than server because it allows easy checking of the moved sites. To achieve
+# this, the guest machine hosts file (`/etc/hosts`) must be set up properly to point at the
+# local copies.
+#
+# Resources
+# ---------
+# * [Closing the VM](https://www.virtualbox.org/manual/ch08.html#vboxmanage-controlvm)
+# * [Get path of a filename](http://stackoverflow.com/a/10274182)
+# * [Starting the VM from a script](https://www.virtualbox.org/manual/ch08.html#vboxmanage-startvm)
+# * [Remove trailing slash](http://stackoverflow.com/a/19485757)
+# * [VM Management](http://ubuntuforums.org/archive/index.php/t-1078689.html)
+# ------------------------------------------------------------------------------
+STORAGE=/media/david/storage/servername
+SQL_DESTINATION=david@192.168.1.145:staging
+HTML_DESTINATION=root@192.168.1.145:/var/www/html
+VM=Xenial
+SQL_EXCLUDE=/media/david/storage/sql-verification-exclude # rsync excludes are controlled in a file
+
+cd $STORAGE;
+
+# Select the Directory to move
+# ------------------------------------------------------------------------------
+zenity --info \
+--text="Begin the build process for backup up client websites. Click \"OK\" to begin. Then select the date-stamped directory in the backup storage area."
+
+SOURCE=`zenity --file-selection --directory --title="Select a Directory to Sync"`
+
+case $? in
+  0)
+  echo "\"$SOURCE\" selected.";;
+  1)
+  echo "No file selected.";;
+  -1)
+  echo "An unexpected error has occurred.";;
+esac
+
+# Start the Virtual Machine - for headless, append --type headless
+# ------------------------------------------------------------------------------
+VBoxManage startvm "$VM" --type headless | zenity --progress \
+  --pulsate --width="320" --height="150" \
+  --text="Starting $VM Virtual Machine" \
+  --title="Please Wait while $VM is started" --auto-close
+
+# Sync HTML directories INDIVIDUALLY
+# ------------------------------------------------------------------------------
+HTML_DIRS=($SOURCE/html)
+
+# Loop through Directories only
+for DIR in $HTML_DIRS/*/; do
+
+  # For our rsync setup, the source directory MUST NOT have a trailing slash -
+  # so that if the directory doesn't exist, it will be created.
+  SOURCE_DIR=${DIR%/}
+
+  # basename of the $DIR - used as the destination directory, under `/var/www/html`
+  DEST_DIR= $(basename $DIR)
+
+  rsync -azv --progress --delete $SOURCE_DIR $HTML_DESTINATION/$DEST_DIR | zenity --progress \
+    --pulsate --width="320" --height="150" \
+    --text="Syncing the HTML directory: $SOURCE_DIR" \
+    --title="Please Wait" --auto-close
+
+done
+
+# Sync SQL backups to a staging directory
+# ------------------------------------------------------------------------------
+rsync -azv --exclude-from=$SQL_EXCLUDE --progress --delete $SOURCE/sql/ $SQL_DESTINATION/sql | zenity --progress \
+  --pulsate --width="320" --height="150" \
+  --text="Syncing the SQL directory" \
+  --title="Please Wait" --auto-close
+
+# Tidy up
+zenity --question \
+--text="Sync complete. Do you want to shut down the VM?"
+
+case $? in
+
+  0)
+  echo "0"
+  # Close up the VM, maintain state
+  VBoxManage controlvm $VM savestate | zenity --progress \
+    --pulsate --width="320" --height="150" \
+    --text="Shutting down $VM Virtual Machine" \
+    --title="Please Wait while VMs are Saved" \
+    --auto-close
+    zenity --info\
+     --window-icon="info" \
+     --text="The VM $VM has been shut down."
+    echo "$vm was closed to a saved state"
+
+  ;;
+
+  1)
+  echo "1"
+  zenity --info\
+  --window-icon="info" \
+  --text="Your VM $VM is Running in a headless state. To view it, go to VirtualBox."
+
+  ;;
+
+  -1)
+  echo "An unexpected error has occurred."
+  ;;
+
+esac

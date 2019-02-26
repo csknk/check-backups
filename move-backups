@@ -31,7 +31,7 @@
 #
 # Requirements
 # ------------
-# [VirtualBox](https://www.virtualbox.org/) is required for the Virtual Machine.
+# [KVM][1] is required for the Virtual Machine.
 # In my case, the VM runs Ubuntu 16.04 Xenial Xerus desktop - desktop rather
 # than server because it allows easy checking of the moved sites. To achieve
 # this, the guest machine hosts file (`/etc/hosts`) must be set up properly to point at the
@@ -45,96 +45,63 @@
 # * [Remove trailing slash](http://stackoverflow.com/a/19485757)
 # * [VM Management](http://ubuntuforums.org/archive/index.php/t-1078689.html)
 # ------------------------------------------------------------------------------
-STORAGE=/media/david/storage/servername
-SQL_DESTINATION=david@192.168.1.145:staging
-HTML_DESTINATION=root@192.168.1.145:/var/www/html
-VM=Xenial
-SQL_EXCLUDE=/media/david/storage/sql-verification-exclude # rsync excludes are controlled in a file
+# set -e
+# keep track of the last executed command
+trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
+# echo an error message before exiting
+trap 'echo "\"${last_command}\" command filed with exit code $?."' EXIT
 
-cd $STORAGE;
-
-# Select the Directory to move
-# ------------------------------------------------------------------------------
-zenity --info \
---text="Begin the build process for backup up client websites. Click \"OK\" to begin. Then select the date-stamped directory in the backup storage area."
-
-SOURCE=`zenity --file-selection --directory --title="Select a Directory to Sync"`
-
-case $? in
-  0)
-  echo "\"$SOURCE\" selected.";;
-  1)
-  echo "No file selected.";;
-  -1)
-  echo "An unexpected error has occurred.";;
-esac
+SOURCE=$HOME/backup-check-tempfiles
+SQL_DESTINATION=david@192.168.122.103:staging
+HTML_DESTINATION=root@192.168.122.103:/var/www/html
+VM=goldfish
+SQL_EXCLUDE=$HOME/.config/check-backups # rsync excludes are controlled in a file
 
 # Start the Virtual Machine - for headless, append --type headless
 # ------------------------------------------------------------------------------
-VBoxManage startvm "$VM" --type headless | zenity --progress \
-  --pulsate --width="320" --height="150" \
-  --text="Starting $VM Virtual Machine" \
-  --title="Please Wait while $VM is started" --auto-close
+echo "Starting $VM virtual machine."
+RUNNING=$(virsh domstate "$VM")
+if [[ "$RUNNING" == "shut off" ]]; then
+	virsh start "$VM"
+	START_TIME=$SECONDS
+	CONNECTION=1
+	while [[ $CONNECTION -ne 0 ]]; do
+		ELAPSED_TIME=$((SECONDS - START_TIME))
+		echo "Seconds elapsed: $ELAPSED_TIME"
+		ssh -q david@192.168.122.103 exit
+		CONNECTION=$?
+		# CONNECTION=$(ssh -q david@192.168.122.103 exit)
+		if (( $ELAPSED_TIME > 30 )) ; then
+			echo "The VM is taking too long to start. There is probably a problem."
+			exit 1
+		fi
+	done
+fi
 
 # Sync HTML directories INDIVIDUALLY
 # ------------------------------------------------------------------------------
 HTML_DIRS=($SOURCE/html)
-
 # Loop through Directories only
 for DIR in $HTML_DIRS/*/; do
+	# For our rsync setup, the source directory MUST NOT have a trailing slash -
+	# so that if the directory doesn't exist, it will be created.
+	SOURCE_DIR=${DIR%/}
 
-  # For our rsync setup, the source directory MUST NOT have a trailing slash -
-  # so that if the directory doesn't exist, it will be created.
-  SOURCE_DIR=${DIR%/}
-
-  # basename of the $DIR - used as the destination directory, under `/var/www/html`
-  DEST_DIR= $(basename $DIR)
-
-  rsync -azv --progress --delete $SOURCE_DIR $HTML_DESTINATION/$DEST_DIR | zenity --progress \
-    --pulsate --width="320" --height="150" \
-    --text="Syncing the HTML directory: $SOURCE_DIR" \
-    --title="Please Wait" --auto-close
-
+	# basename of the $DIR - used as the destination directory, under `/var/www/html`
+	DEST_DIR=$(basename $DIR)
+	#rsync -azv --progress --delete $SOURCE_DIR $HTML_DESTINATION/$DEST_DIR
+	rsync -azv --progress --delete $SOURCE_DIR $HTML_DESTINATION
 done
 
 # Sync SQL backups to a staging directory
 # ------------------------------------------------------------------------------
-rsync -azv --exclude-from=$SQL_EXCLUDE --progress --delete $SOURCE/sql/ $SQL_DESTINATION/sql | zenity --progress \
-  --pulsate --width="320" --height="150" \
-  --text="Syncing the SQL directory" \
-  --title="Please Wait" --auto-close
+rsync -azv --rsync-path="mkdir -p $SQL_DESTINATION && rsync" --exclude-from=$SQL_EXCLUDE --progress --delete $SOURCE/sql/ $SQL_DESTINATION/sql
 
-# Tidy up
-zenity --question \
---text="Sync complete. Do you want to shut down the VM?"
-
-case $? in
-
-  0)
-  echo "0"
-  # Close up the VM, maintain state
-  VBoxManage controlvm $VM savestate | zenity --progress \
-    --pulsate --width="320" --height="150" \
-    --text="Shutting down $VM Virtual Machine" \
-    --title="Please Wait while VMs are Saved" \
-    --auto-close
-    zenity --info\
-     --window-icon="info" \
-     --text="The VM $VM has been shut down."
-    echo "$vm was closed to a saved state"
-
-  ;;
-
-  1)
-  echo "1"
-  zenity --info\
-  --window-icon="info" \
-  --text="Your VM $VM is Running in a headless state. To view it, go to VirtualBox."
-
-  ;;
-
-  -1)
-  echo "An unexpected error has occurred."
-  ;;
-
-esac
+read -p "Sync complete. Do you want to shut down the VM? [N/y]" SHUTDOWN
+if [[ ${SHUTDOWN} =~ [yY](es)* ]]; then
+	# Close up the VM, maintain state
+	virsh shutdown "$VM"
+	echo "$VM was closed to a saved state"
+else
+	echo "Exiting. The $VM is still running."
+fi

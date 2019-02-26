@@ -24,9 +24,9 @@ These BASH scripts have been tested on Ubuntu Xenial Xerus 16.04.
 
 [Zenity](https://help.gnome.org/users/zenity/stable/intro.html.en) has been used to create user dialogues.
 
-[VirtualBox](https://www.virtualbox.org/) is required for the Virtual Machine. In this case, the VM runs Ubuntu 16.04 Xenial Xerus desktop - desktop rather than server because it allows easy checking of the moved sites. To achieve this, the guest machine hosts file (`/etc/hosts`) must be set up properly to point at the local copies.
+[KVM]([1]:https://help.ubuntu.com/community/KVM) is required for the Virtual Machine. In this case, the VM runs Ubuntu 16.04 server.
 
-The virtual machine also runs Ubuntu 16.04. The database server is MariaDB, but the commands woudl work on a standard MySQL database server.
+The virtual machine also runs Ubuntu 16.04. The database server is MariaDB, but the commands would work on a standard MySQL database server.
 
 The sql backups directory includes the `performance_schema.sql`, `phpmyadmin.sql`, `mysql.sql` and log files from the original server. These aren't necessary to check backups, and if imported will probably mess up the VM MySQL configuration. Because of this, we exclude these files from the transfer - see the `sql-verification-exclude` file in this repo for example.
 
@@ -46,7 +46,7 @@ Usage:
 
 When prompted, you should select a directory that contains the backed-up `html`
 directory from the Apache doc root - the directory that is normally located
-at `/var/www/` in a standard Apache setup.
+at `/var/www/html` in a standard Apache setup.
 
 Note that the moved files won't do anything unless you also import the
 associated databases on the guest machine.
@@ -55,6 +55,17 @@ associated databases on the guest machine.
 - Add `import-databases` to `usr/local/bin` on the Guest computer/VM: `mv import-databases /usr/local/bin`
 - Make executable: `chmod +x /usr/local/bin/import-databases`
 - Run `import-databases` in a terminal
+
+
+## Migrating MySQL Users
+```
+mysql -B -N -uroot -p -e "SELECT CONCAT('\'', user,'\'@\'', host, '\'') FROM user WHERE user != 'debian-sys-maint' AND user != 'root' AND user != ''" mysql > mysql_all_users.txt
+```
+
+`--batch`, `-B`: Print results using tab as the column separator, with each row on a new line.
+Does not use the history file. Batch mode results in nontabular output format and escaping of special characters.
+Escaping may be disabled by using raw mode; see the description for the --raw option.
+
 
 ## TODO
 - Document how to add key-pair to avoid entering password during SSH

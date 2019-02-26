@@ -8,29 +8,108 @@
 #
 #-------------------------------------------------------------------------------
 
-SOURCE=/home/david/staging/sql
-PASSWORD=thepassword
-DATABASES=($SOURCE/*)
+readonly SOURCE=/home/david/staging/sql
+readonly DATABASES=($SOURCE/*)
+readonly TIMESTAMP=$(date "+%H%M%S-%d-%m-%Y")
+readonly UNDO_SCRIPT=rollback/${TIMESTAMP}-drop-dbs.sql
+readonly MANIFEST=manifest.csv
+readonly LOG=sql-log/${TIMESTAMP}-log.sql
 
-for (( i = 0; i < ${#DATABASES[@]}; i++ )); do
+function make_manifest() {
+	echo "dir,serverName" > $MANIFEST
+}
 
-  # The file extension - in our case, there are *.log files that should be ignored
-  EXT=${DATABASES[$i]#*.}
 
-  if [[ "sql" == $EXT ]]; then
+function create_undo_script() {
+	cat <<- EOF > $UNDO_SCRIPT
+	# Drop databases
+	# --------------
+	EOF
+}
 
-    DB_SOURCE=${DATABASES[$i]}
-    DB_NAME=$(basename ${DATABASES[$i]} .sql)
+function migrate_databases() {
+	local ext
+	local db_name
+	local db_source
+	local drop_query
+	local create_query
+	local options_table
+	local site_url
+	local domain
+	local core_name
+	local new_url
+	local amend_url_query
 
-    # If a Databse exists with this name, DROP it
-    mysql --user=root --password=$PASSWORD -e "DROP DATABASE IF EXISTS \`$DB_NAME\`"
+	local PASSWORD
 
-    # Create new DB with the name of the DB backup file
-    mysql --user=root --password=$PASSWORD -e "create database \`$DB_NAME\`; GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO root@localhost IDENTIFIED BY '$PASSWORD'"
+	echo "Enter the MySQL password:"
+	read -s PASSWORD
 
-    # Import the Database
-    mysql --user=root --password=$PASSWORD $DB_NAME < $DB_SOURCE
+	for (( i = 0; i < ${#DATABASES[@]}; i++ )); do
 
-  fi
+		# Ignore files that do not have the extension .sql
+		# ------------------------------------------------
+		ext=${DATABASES[$i]#*.}
+		if [[ "sql" != $ext ]]; then continue; fi
 
-done
+		# Set name of new database, and the backup source
+		# -----------------------------------------------
+		db_name=$(basename ${DATABASES[$i]} .sql) # Strips the .sql extension
+		db_source=${DATABASES[$i]}
+		
+		# Ignore mysql admin databases.
+		# -----------------------------
+		if [[ $db_name == mysql || $db_name == performance_schema ]]; then continue; fi
+		
+		# Start log entry
+		# ---------------
+		echo "# MySQL commands for ${db_name}" >> ${LOG}
+
+		# Drop existing db, and create new.
+		# ---------------------------------
+		echo "If database ${db_name} exists, drop it."
+		drop_query="DROP DATABASE IF EXISTS \`$db_name\`"
+		echo "${drop_query}"; >> $UNDO_SCRIPT
+		printf "%s\n" "${drop_query}" >> ${LOG}
+		mysql --user=root --password=$PASSWORD -e "${drop_query}"
+
+		echo "Creating $db_name..."
+		create_query="CREATE DATABASE \`$db_name\`;
+		GRANT ALL PRIVILEGES ON \`$db_name\`.* TO root@localhost IDENTIFIED BY '$PASSWORD';"
+		create_query=${create_query//$'\n'}
+		create_query=${create_query//$'\t'}
+		printf "%s\n" "${create_query}" >> ${LOG}
+		mysql -v --user=root --password=$PASSWORD -e "${create_query}"
+
+		# Import the Database
+		# -------------------
+		echo "Importing data to $db_name"
+		mysql --user=root --password=${PASSWORD} $db_name < $db_source
+
+		# Amend the domain
+		# ----------------
+		echo "Amending the siteurl/home values"
+		options_table=$(mysql -B -N -uroot --password=$PASSWORD -e "SHOW TABLES LIKE '%options'" $db_name)
+		url_query="SELECT option_value FROM ${options_table} WHERE option_name = 'siteurl'"
+		site_url=$(mysql -B -N -uroot --password=${PASSWORD} -e "${url_query}" ${db_name})
+		
+		domain="$(echo $site_url | sed 's,^.*://\(.*\),\1,g')"
+		core_name="$(echo $site_url | grep :// | sed 's,^.*://\([^\.]*\)\..*,\1,g')"
+		new_url="http://$core_name.backup"
+		
+		echo "${domain},${core_name}.backup" >> $MANIFEST
+		
+		amend_url_query="UPDATE ${options_table}
+		SET option_value = replace(option_value, '${site_url}', '${new_url}')
+		WHERE option_name = 'home' OR option_name = 'siteurl'"
+		mysql -v --user=root --password=$PASSWORD -e "${amend_url_query}" $db_name
+	done
+}
+
+function main() {
+	make_manifest
+	create_undo_script
+	migrate_databases
+}
+
+main

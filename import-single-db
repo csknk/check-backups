@@ -1,0 +1,72 @@
+#!/bin/bash
+readonly TIMESTAMP=$(date "+%H%M%S-%d-%m-%Y")
+readonly LOG_DIR=$HOME/mysql-import-log
+readonly LOG=$LOG_DIR/${TIMESTAMP}-log.sql
+readonly UNDO_SCRIPT=$LOG_DIR/rollback/${TIMESTAMP}-drop-dbs.sql
+
+mkdir -p $LOG_DIR/rollback
+
+set() {
+	echo "Enter the MySQL password:"
+	read -s ROOT_PASSWORD
+
+	echo "Enter the Database password. Should match wp_config.php:"
+	read -s DB_PASSWORD
+
+	echo "Enter full path to sql file to import:"
+	read db_source
+
+	echo "Enter database name. Should match wp_config.php:"
+	read db_name
+}
+
+build_queries() {
+	echo "# MySQL commands for ${db_name}" >> ${LOG}
+
+	# Save a DROP query for rollback purposes.
+	# ----------------------------------------
+	drop_query="DROP DATABASE IF EXISTS \`$db_name\`"
+	printf "%s\n" "${drop_query}" >> ${UNDO_SCRIPT}
+	printf "%s\n" "${drop_query}" >> ${LOG}
+
+	# Build the create query
+	# ----------------------
+	echo "Creating $db_name if it does not exist..."
+	create_query="CREATE DATABASE IF NOT EXISTS \`$db_name\`;
+	GRANT ALL PRIVILEGES ON \`$db_name\`.* TO root@localhost IDENTIFIED BY '$ROOT_PASSWORD';"
+	create_query=${create_query//$'\n'}
+	create_query=${create_query//$'\t'}
+	printf "%s\n" "${create_query}" >> ${LOG}
+}
+
+import() {
+	echo "Create database ${db_name}."
+	mysql -v --user=root --password=$ROOT_PASSWORD -e "${create_query}"
+	echo "Importing data from ${db_source} to ${db_name}."
+	mysql --user=root --password=${ROOT_PASSWORD} $db_name < $db_source
+}
+
+cleanup() {
+	echo "Unsetting password variables."
+	unset $ROOT_PASSWORD
+	unset $DB_PASSWORD
+}
+
+set
+build_queries
+
+echo "The query is:"
+echo "${create_query}"
+read -p "Do you wish to create the database and import data from "${db_source}"? [y/N]" PROCEED
+case $PROCEED in
+	[Yy]* )
+		import
+		cleanup
+		;;
+	[Nn]* )
+		echo "No SQL queries will be run."
+		cleanup
+		;;
+	* ) echo "Please answer yes or no.";;
+esac
+

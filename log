@@ -1,0 +1,5 @@
+Starting goldfish virtual machine.
+Domain goldfish started
+
+Seconds elapsed: 2
+"CONNECTION=$(ssh -q david@192.168.122.103 'exit 0')" command filed with exit code 255.
